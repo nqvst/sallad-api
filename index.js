@@ -1,17 +1,21 @@
 const express = require('express')
+const crypto = require('crypto')
 const cors = require('cors')
-const { v4: uuidv4 } = require('uuid')
 const morgan = require('morgan')
+const basicAuth = require('express-basic-auth')
 
-const MAX_SEGMENTS = process.env.MAX_SEGMENTS || 100
+const MAX_SEGMENTS = process.env.MAX_SEGMENTS || 1_000_000
 const PORT = process.env.PORT || 3001
 const app = express()
+const auth = basicAuth({
+  users: { admin: '@rw6!A26hMt&t9VdxWK6' },
+})
 
 const db = require('./db.js')
 
 console.log(process.env.STAGE)
 
-const am = (fn) => (req, res, next) => {
+const asyncMiddleware = (fn) => (req, res, next) => {
   Promise.resolve(fn(req, res, next)).catch(next)
 }
 
@@ -32,27 +36,26 @@ const getOffset = (uuid) => {
   }
 }
 
-const getSegmentsByPercentile = (percentile) => {
-  return Math.floor((MAX_SEGMENTS * percentile) / 100)
+const getValueByPercentile = (prtcentage) => {
+  return Math.floor((MAX_SEGMENTS * prtcentage) / 100)
 }
 
 const getOffsetPercentiles = (test) => {
   const offset = getOffset(test.uuid)
-  const start = getSegmentsByPercentile(offset % MAX_SEGMENTS)
-  const end = getSegmentsByPercentile((test.percentage + offset) % MAX_SEGMENTS)
-
-  //console.log("getOffsetPercentiles", { offset, start, end });
+  const start = offset % MAX_SEGMENTS
+  const endPercentile = getValueByPercentile(test.percentage)
+  const end = (start + endPercentile) % MAX_SEGMENTS
 
   return { start, end }
 }
 
 const getGroupInTestBySegment = (segment, test) => {
-  const groupSize = test.percentage / test.split
+  const groupSize = getValueByPercentile(test.percentage / test.split)
+  const { start, end } = getOffsetPercentiles(test)
 
   const groups = Array(test.split)
     .fill(0)
     .map((_, i) => {
-      const { start, end } = getOffsetPercentiles(test)
       return {
         group: i,
         start: (start + groupSize * i) % MAX_SEGMENTS,
@@ -60,11 +63,10 @@ const getGroupInTestBySegment = (segment, test) => {
       }
     })
 
-  const group = groups.find(({ start, end }) => {
-    return isInRange({ segment, start, end })
+  const group = groups.find((g) => {
+    return isInRange({ segment, start: g.start, end: g.end })
   })
 
-  // console.log(groups);
   if (typeof group === 'undefined') {
     throw new Error('somehow the segment was not part of the test percentile')
   }
@@ -74,20 +76,21 @@ const getGroupInTestBySegment = (segment, test) => {
 
 const isInRange = ({ segment, start, end }) => {
   if (start === end) {
-    // 100%
     return true
   }
   if (end < start) {
     // wrapped around
-    return segment >= start || segment < end
+    return segment >= start || segment <= end
   }
   return segment >= start && segment < end
 }
 
 const getActiveTestsForSegment = (segment, tests) => {
-  const testsForSegment = tests.filter((t) => {
-    return isInRange({ segment, ...getOffsetPercentiles(t) })
-  })
+  const testsForSegment = tests
+    .filter((t) => {
+      return isInRange({ segment, ...getOffsetPercentiles(t) })
+    })
+    .filter((t) => t.active && !t.archived)
 
   return testsForSegment.map((t) => {
     return {
@@ -106,9 +109,13 @@ app.get('/', (req, res) => {
   })
 })
 
+app.get('/generate', (req, res) => {
+  res.json({ segment: crypto.randomInt(MAX_SEGMENTS) })
+})
+
 app.get(
   '/tests/segment/:segmentId',
-  am(async (req, res) => {
+  asyncMiddleware(async (req, res) => {
     const segmentId = parseInt(req.params.segmentId, 10)
     if (segmentId > MAX_SEGMENTS) {
       throw new Error('Segment is out of range')
@@ -127,19 +134,66 @@ app.get(
 )
 app.get(
   '/tests/all',
-  am(async (req, res) => {
+  asyncMiddleware(async (req, res) => {
     const testsFromDb = await db.getAllTests()
     console.log(testsFromDb)
     res.json(testsFromDb.map((t) => ({ ...t, ...getOffsetPercentiles(t) })))
   })
 )
 
+app.get(
+  '/tests/:testId',
+  asyncMiddleware(async (req, res) => {
+    const { testId } = req.params
+    const test = await db.getTest(testId)
+    console.log(test)
+    res.json({
+      ...test,
+      ...getOffsetPercentiles(test),
+    })
+  })
+)
+
 app.post(
   '/tests/new',
-  am(async (req, res) => {
+  auth,
+  asyncMiddleware(async (req, res) => {
     const inputData = req.body
     await db.createTest(inputData)
     res.json({ message: 'test created' })
+  })
+)
+
+app.post(
+  '/tests/activate',
+  auth,
+  asyncMiddleware(async (req, res) => {
+    const { testId } = req.body
+    await db.setActive(testId, true)
+    const test = await db.getTest(testId)
+    res.json(test)
+  })
+)
+
+app.post(
+  '/tests/deactivate',
+  auth,
+  asyncMiddleware(async (req, res) => {
+    const { testId } = req.body
+    await db.setActive(testId, false)
+    const test = await db.getTest(testId)
+    res.json(test)
+  })
+)
+
+app.post(
+  '/tests/archive',
+  auth,
+  asyncMiddleware(async (req, res) => {
+    const { testId } = req.body
+    await db.archiveTest(testId)
+    const test = await db.getTest(testId)
+    res.json(test)
   })
 )
 
