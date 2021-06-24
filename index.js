@@ -152,7 +152,8 @@ app.get(
   '/tests/:testId',
   asyncMiddleware(async (req, res) => {
     const { testId } = req.params
-    const test = await db.getTest(testId)
+    const result = await db.getTest(testId)
+    const test = result[0]
     console.log(test)
     res.json({
       ...test,

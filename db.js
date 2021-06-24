@@ -9,8 +9,8 @@ const getAllTests = async () => {
   return db.select().table('tests')
 }
 
-const getTest = async (id) => {
-  return db('tests').where('id', id)
+const getTest = async (uuid) => {
+  return db('tests').where('uuid', uuid)
 }
 
 const createTest = ({ title, hypothesis, percentage, split }) => {
@@ -34,8 +34,8 @@ const createTest = ({ title, hypothesis, percentage, split }) => {
   })
 }
 
-const archiveTest = (id) => {
-  return db('tests').where('id', id).update({
+const archiveTest = (uuid) => {
+  return db('tests').where('uuid', uuid).update({
     archived: true,
     active: false,
     archived_at: 'now',
@@ -43,8 +43,8 @@ const archiveTest = (id) => {
   })
 }
 
-const setActive = (id) => {
-  return db('tests').where('id', id).update({
+const setActive = (uuid) => {
+  return db('tests').where('uuid', uuid).update({
     active: true,
     activated_at: 'now',
     updated_at: 'now',
@@ -52,14 +52,14 @@ const setActive = (id) => {
 }
 
 const setInactive = (id) => {
-  return db('tests').where('id', id).update({
+  return db('tests').where('uuid', uuid).update({
     active: false,
     updated_at: 'now',
   })
 }
 
-const deleteTest = (id) => {
-  return db('tests').where('id', id).del()
+const deleteTest = (uuid) => {
+  return db('tests').where('uuid', uuid).del()
 }
 
 module.exports = {
