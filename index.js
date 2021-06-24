@@ -132,12 +132,19 @@ app.get(
     res.json(activeTestsForSegment)
   })
 )
+
 app.get(
   '/tests/all',
   asyncMiddleware(async (req, res) => {
     const testsFromDb = await db.getAllTests()
     console.log(testsFromDb)
-    res.json(testsFromDb.map((t) => ({ ...t, ...getOffsetPercentiles(t) })))
+    res.json({
+      max: MAX_SEGMENTS,
+      tests: testsFromDb.map((t) => ({
+        ...t,
+        ...getOffsetPercentiles(t),
+      })),
+    })
   })
 )
 
